@@ -1,11 +1,13 @@
 const mineflayer = require('mineflayer');
-const { pathfinder } = require('mineflayer-pathfinder');
 const express = require('express');
+const path = require('path');
 const config = require('./config.json');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000; // Render provides the port
 let bot;
+
+app.use(express.static('public'));
 
 function createBot() {
     bot = mineflayer.createBot({
@@ -15,42 +17,26 @@ function createBot() {
         version: config.version
     });
 
-    bot.loadPlugin(pathfinder);
-
-    // --- Login Logic ---
+    // Login logic
     bot.on('chat', (username, message) => {
-        if (message.includes('/login')) {
-            bot.chat(`/login ${config.password}`);
-        }
+        if (message.includes('/login')) bot.chat(`/login ${config.password}`);
     });
 
-    // --- Spawn & Anti-AFK ---
     bot.on('spawn', () => {
-        console.log("Bot joined! Moving to AFK zone...");
+        console.log("Bot online.");
         bot.chat('/warp afk');
-        
-        // Minor movements to prevent server kicks
-        setInterval(() => {
-            bot.setControlState('jump', true);
-            setTimeout(() => bot.setControlState('jump', false), 500);
-        }, 60000);
     });
 
-    // --- GUI / Menu Handling (Trade & Pay) ---
+    // GUI Logic for Pay/Trade
     bot.on('windowOpen', async (window) => {
         const title = window.title ? JSON.parse(window.title).text : "";
-        console.log(`Opened Menu: ${title}`);
-
         const items = window.containerItems();
 
-        // 1. Find AFK Key in Trade
+        // Find AFK Key
         const afkKey = items.find(i => i.displayName.toLowerCase().includes('afk key'));
-        if (afkKey) {
-            console.log("Adding AFK Key to trade...");
-            await bot.clickWindow(afkKey.slot, 0, 0);
-        }
+        if (afkKey) await bot.clickWindow(afkKey.slot, 0, 0);
 
-        // 2. Find Confirmation (End Stone / Green Block)
+        // Find Confirmation
         const confirmBtn = items.find(i => 
             i.displayName.toLowerCase().includes('confirm') || 
             i.name.includes('end_stone') || 
@@ -59,7 +45,6 @@ function createBot() {
 
         if (confirmBtn) {
             const delay = title.toLowerCase().includes('trade') ? 10500 : 1000;
-            console.log(`Clicking confirm in ${delay/1000}s...`);
             setTimeout(() => bot.clickWindow(confirmBtn.slot, 0, 0), delay);
         }
     });
@@ -67,26 +52,22 @@ function createBot() {
     bot.on('end', () => setTimeout(createBot, 10000));
 }
 
-// --- Web Dashboard API ---
-app.get('/', (res) => res.send('Bot is running. Use /pay, /trade, or /afk endpoints.'));
-
+// API Routes
 app.get('/pay', (req, res) => {
     bot.chat(`/pay ${config.owner} 1000`);
-    res.send('Payment sent! Check GUI to confirm.');
+    res.send('Pay command sent');
 });
 
 app.get('/trade', (req, res) => {
     bot.chat('/spawn');
-    setTimeout(() => {
-        bot.chat(`/trade ${config.owner}`);
-        res.send('At spawn, trade started.');
-    }, 3000);
+    setTimeout(() => bot.chat(`/trade ${config.owner}`), 3000);
+    res.send('Heading to spawn for trade');
 });
 
 app.get('/afk', (req, res) => {
     bot.chat('/warp afk');
-    res.send('Returning to AFK area.');
+    res.send('Returning to AFK');
 });
 
-app.listen(port, () => console.log(`Control bot at http://localhost:${port}`));
+app.listen(port, () => console.log(`Dashboard live on port ${port}`));
 createBot();
