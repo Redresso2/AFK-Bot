@@ -1,19 +1,11 @@
 {
   "name": "sentry-afk-bot",
   "version": "1.0.0",
+  "description": "AFK Bot for Sentry SMP with Web Control",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "express": "^4.19.2",
-    "mineflayer": "^4.35.0",
-    "mineflayer-auto-auth": "^2.0.0",
-    "mineflayer-pathfinder": "^2.0.0",
-    "minecraft-data": "^3.66.0",
-    "socket.io": "^4.7.5"
-  },
-  "engines": {
-    "node": ">=18"
+    "mineflayer": "^4.20.0",
+    "mineflayer-pathfinder": "^2.4.0",
+    "express": "^4.18.2"
   }
 }
