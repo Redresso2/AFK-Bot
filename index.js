@@ -1,91 +1,92 @@
 const mineflayer = require('mineflayer');
-const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
-const autoAuth = require('mineflayer-auto-auth');
+const { pathfinder } = require('mineflayer-pathfinder');
 const express = require('express');
-const path = require('path');
-const http = require('http');
-const socketIo = require('socket.io');
-const mcDataLib = require('minecraft-data');
-
-const config = {
-  host: process.env.SERVER_HOST || 'mc.sentrysmp.eu',
-  port: parseInt(process.env.SERVER_PORT) || 25565,
-  version: false,
-  authPass: process.env.AUTH_PASS,
-  mainUser: process.env.MAIN_USER || 'Redresso2'
-};
+const config = require('./config.json');
 
 const app = express();
-const server = http.createServer(app);
-const io = socketIo(server, { cors: { origin: '*' } });
+const port = 3000;
+let bot;
 
-app.use(express.json());
-app.use(express.static('public'));
+function createBot() {
+    bot = mineflayer.createBot({
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        version: config.version
+    });
 
-let bot, mcdata, defaultMove, expectingWindow = null;
-let logs = [];
-const MAX_LOGS = 2000;
+    bot.loadPlugin(pathfinder);
 
-function logLine(line) {
-  const ts = new Date().toLocaleTimeString('en-US', { timeZone: 'UTC' });
-  const full = `[${ts} UTC] ${line}`;
-  logs.push(full);
-  if (logs.length > MAX_LOGS) logs.shift();
-  io.emit('log_line', full);
+    // --- Login Logic ---
+    bot.on('chat', (username, message) => {
+        if (message.includes('/login')) {
+            bot.chat(`/login ${config.password}`);
+        }
+    });
+
+    // --- Spawn & Anti-AFK ---
+    bot.on('spawn', () => {
+        console.log("Bot joined! Moving to AFK zone...");
+        bot.chat('/warp afk');
+        
+        // Minor movements to prevent server kicks
+        setInterval(() => {
+            bot.setControlState('jump', true);
+            setTimeout(() => bot.setControlState('jump', false), 500);
+        }, 60000);
+    });
+
+    // --- GUI / Menu Handling (Trade & Pay) ---
+    bot.on('windowOpen', async (window) => {
+        const title = window.title ? JSON.parse(window.title).text : "";
+        console.log(`Opened Menu: ${title}`);
+
+        const items = window.containerItems();
+
+        // 1. Find AFK Key in Trade
+        const afkKey = items.find(i => i.displayName.toLowerCase().includes('afk key'));
+        if (afkKey) {
+            console.log("Adding AFK Key to trade...");
+            await bot.clickWindow(afkKey.slot, 0, 0);
+        }
+
+        // 2. Find Confirmation (End Stone / Green Block)
+        const confirmBtn = items.find(i => 
+            i.displayName.toLowerCase().includes('confirm') || 
+            i.name.includes('end_stone') || 
+            i.name.includes('terracotta')
+        );
+
+        if (confirmBtn) {
+            const delay = title.toLowerCase().includes('trade') ? 10500 : 1000;
+            console.log(`Clicking confirm in ${delay/1000}s...`);
+            setTimeout(() => bot.clickWindow(confirmBtn.slot, 0, 0), delay);
+        }
+    });
+
+    bot.on('end', () => setTimeout(createBot, 10000));
 }
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// --- Web Dashboard API ---
+app.get('/', (res) => res.send('Bot is running. Use /pay, /trade, or /afk endpoints.'));
 
-// Random Not[word]XX name
-const words = ["AFK","Bot","Player","Human","Real","User","Guest","Member","Noob","Pro","Legend","Ghost","Shadow","Ninja","Warrior","Miner","Farmer","Builder","Explorer","Hunter","King","Queen","Boss","Hero","Viking"];
-const randomWord = words[Math.floor(Math.random() * words.length)];
-const botName = `Not${randomWord}${Math.floor(Math.random() * 90 + 10)}`;
-logLine(`🤖 Bot: ${botName}`);
-
-bot = mineflayer.createBot({
-  host: config.host,
-  port: config.port,
-  username: botName,
-  version: config.version,
-  auth: 'offline'
+app.get('/pay', (req, res) => {
+    bot.chat(`/pay ${config.owner} 1000`);
+    res.send('Payment sent! Check GUI to confirm.');
 });
 
-bot.loadPlugin(pathfinder);
-bot.loadPlugin(autoAuth.plugin);
-
-bot.once('spawn', async () => {
-  logLine('✅ Spawned!');
-  mcdata = mcDataLib(bot.version);
-  defaultMove = new Movements(bot, mcdata);
-  bot.pathfinder.setMovements(defaultMove);
-
-  logLine('Approaching NPC...');
-  const goal = new GoalNear(bot.entity.position.x + 5, bot.entity.position.y, bot.entity.position.z + 3, 2);
-  bot.pathfinder.setGoal(goal);
-  await sleep(5500);
-
-  const entities = Object.values(bot.entities).filter(e => e.type === 'mob' || e.type === 'player');
-  const nearest = entities.sort((a,b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
-
-  if (nearest && bot.entity.position.distanceTo(nearest.position) < 6) {
-    logLine('Interacting with NPC');
-    bot.lookAt(nearest.position.offset(0, nearest.height * 0.85, 0));
-    await sleep(900);
-    bot.activateEntity(nearest);
-    await sleep(2800);
-  } else {
-    logLine('⚠️ No NPC — check coords');
-  }
-
-  logLine(' /warp afk');
-  bot.chat('/warp afk');
-
-  setInterval(() => {
-    bot.look(Math.random() * Math.PI * 2, (Math.random() - 0.5) * Math.PI / 2, false);
-    if (Math.random() > 0.6) bot.setControlState('jump', true), setTimeout(() => bot.setControlState('jump', false), 300);
-  }, 23000);
+app.get('/trade', (req, res) => {
+    bot.chat('/spawn');
+    setTimeout(() => {
+        bot.chat(`/trade ${config.owner}`);
+        res.send('At spawn, trade started.');
+    }, 3000);
 });
 
-// ... (all other bot.on events, handleWindow, io.on, app.get same as previous code) ...
+app.get('/afk', (req, res) => {
+    bot.chat('/warp afk');
+    res.send('Returning to AFK area.');
+});
 
-server.listen(process.env.PORT || 3000, () => logLine('Dashboard ready!'));
+app.listen(port, () => console.log(`Control bot at http://localhost:${port}`));
+createBot();
