@@ -11,70 +11,66 @@ const settings = {
     version: '1.20.1'
 };
 
-let bot;
+let bot = null;
 let isReady = false;
-let joinCount = 0; 
+let isBypassing = false;
 
-function startBot() {
-    // If a bot instance already exists, kill it properly before starting a new one
-    if (bot) {
-        bot.removeAllListeners();
-        bot.quit();
-        bot = null;
-    }
+function createBot() {
+    // 1. Safety check: Don't start if a bot is already trying
+    if (bot) return;
 
-    isReady = false;
-    console.log(`--- Connecting... (Attempt #${joinCount + 1}) ---`);
-
+    console.log(`[SYSTEM] Starting connection...`);
+    
     bot = mineflayer.createBot({
         host: settings.host,
         port: settings.port,
         username: settings.username,
         version: settings.version,
-        hideErrors: true // Keeps logs clean from standard disconnect errors
+        hideErrors: true 
     });
 
     bot.once('spawn', () => {
-        if (joinCount === 0) {
-            console.log("Joined Buffer. Waiting for expected kick...");
-            // We do nothing here, just wait for the anti-bot to kick us
+        if (!isBypassing) {
+            console.log("[STAGE 1] In Buffer. Waiting for anti-bot kick...");
         } else {
+            console.log("[STAGE 2] Bypass Success! Logged in.");
             isReady = true;
-            console.log("Bypass Success! Moving to AFK...");
             bot.chat('/warp afk');
         }
     });
 
     bot.on('chat', (username, message) => {
         if (isReady && message.includes('/login')) {
-            setTimeout(() => bot.chat(`/login ${settings.password}`), 2000);
+            setTimeout(() => bot.chat(`/login ${settings.password}`), 3000);
         }
     });
 
-    // Handle Disconnects
-    bot.on('end', (reason) => {
-        isReady = false;
+    bot.on('end', () => {
+        bot = null; // Clear the variable so we can start a new one
         
-        if (joinCount === 0) {
-            joinCount = 1; 
-            console.log("Kicked from Buffer. Reconnecting in 2 seconds...");
-            setTimeout(startBot, 2500); // Clean 2.5s delay
+        if (!isBypassing) {
+            isBypassing = true;
+            console.log("[SYSTEM] Kicked. Reconnecting for bypass in 5 seconds...");
+            setTimeout(createBot, 5000); // 5 seconds is safer than 2 to avoid spam kick
         } else {
-            console.log("Disconnected from main. Cooling down for 20s...");
-            joinCount = 0; 
-            setTimeout(startBot, 20000);
+            console.log("[SYSTEM] Disconnected. Waiting 30s to reset...");
+            isBypassing = false;
+            isReady = false;
+            setTimeout(createBot, 30000);
         }
     });
 
     bot.on('error', (err) => {
-        console.log("Connection Error: ", err.message);
-        joinCount = 0; 
-        setTimeout(startBot, 10000);
+        console.log("[ERROR]", err.message);
+        bot = null;
+        isBypassing = false;
+        setTimeout(createBot, 30000); // Heavy cooldown on error
     });
 }
 
-// Render Health Check
-app.get('/', (req, res) => res.send(isReady ? "Online" : "Bypassing..."));
-app.listen(process.env.PORT || 10000);
-
-startBot();
+// Render Port Binding (Crucial to stay live)
+app.get('/', (req, res) => res.send(isReady ? "BOT ONLINE" : "BOT BYPASSING..."));
+app.listen(process.env.PORT || 10000, () => {
+    console.log("Web Dashboard Live");
+    createBot(); // Start bot ONLY after web server is up
+});
