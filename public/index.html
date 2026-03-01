@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Sentry AFK Bot - Live Console</title>
+<style>
+body{margin:0;font-family:monospace;background:#000;color:#0f0;height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+#top{background:#111;padding:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+input,button{padding:7px 10px;background:#222;color:#0f0;border:1px solid #0f0;font-family:inherit;}
+button:hover{background:#0f0;color:#000;cursor:pointer;}
+#console{flex:1;padding:12px;overflow:auto;line-height:1.4;font-size:14px;}
+#bar{position:fixed;bottom:0;left:0;right:0;background:#111;padding:8px;display:flex;gap:6px;}
+#cmd{flex:1;}
+</style>
+</head>
+<body>
+<div id="top">
+  <strong>🤖 SentrySMP AFK Bot</strong>
+  <input id="player" placeholder="Player (default: Redresso2)" style="width:160px">
+  <input id="amt" type="number" value="5000" style="width:90px">
+  <button onclick="pay()">💰 Pay</button>
+  <button onclick="trade('keys')">🔑 Trade Keys</button>
+  <button onclick="trade('dump')">📦 Dump Full Inv</button>
+  <button onclick="cmd('warp afk')">🏠 Warp AFK</button>
+  <button onclick="status()">Status</button>
+  <input id="tp" placeholder="x y z" style="width:110px">
+  <button onclick="tp()">TP</button>
+</div>
+<div id="console">Waiting for bot...</div>
+<div id="bar">
+  <input id="cmd" placeholder="Command (no /)  e.g. bal" autocomplete="off">
+  <button onclick="sendCmd()">Send</button>
+  <button onclick="clearLog()">Clear</button>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const con = document.getElementById('console');
+
+socket.on('connect', () => con.innerHTML += '✅ Connected to bot!<br>');
+socket.on('log_line', l => { con.innerHTML += l + '<br>'; con.scrollTop = con.scrollHeight; });
+socket.on('init_logs', arr => { con.innerHTML = arr.join('<br>') + '<br>'; con.scrollTop = con.scrollHeight; });
+
+document.getElementById('cmd').addEventListener('keypress', e => { if(e.key==='Enter') sendCmd(); });
+
+function sendCmd(){ const v=document.getElementById('cmd').value.trim(); if(v){ socket.emit('run_cmd', v); document.getElementById('cmd').value=''; }}
+function pay(){ const p=document.getElementById('player').value||'Redresso2'; const a=document.getElementById('amt').value; socket.emit('special',{type:'pay',player:p,amt:a}); }
+function trade(m){ const p=document.getElementById('player').value||'Redresso2'; socket.emit('special',{type:'trade',mode:m,player:p}); }
+function cmd(c){ socket.emit('run_cmd', c); }
+async function status(){ const r=await fetch('/status'); const d=await r.json(); con.innerHTML += `📍 Bot: ${d.botName} | Pos: ${d.pos} | ❤️ ${d.health}<br>`; con.scrollTop=con.scrollHeight; }
+async function tp(){ const c=document.getElementById('tp').value.trim().split(' '); if(c.length===3){ await fetch('/tp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:c[0],y:c[1],z:c[2]})}); con.innerHTML += `🚶 Pathing to ${c.join(' ')}<br>`; con.scrollTop=con.scrollHeight; }}
+function clearLog(){ con.innerHTML=''; }
+</script>
+</body>
+</html>
