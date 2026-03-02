@@ -1,65 +1,120 @@
+require('dotenv').config();
 const mineflayer = require("mineflayer");
+const express = require("express");
+const bodyParser = require('body-parser');
 
+const app = express();
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// --- CONFIGURATION ---
 const settings = {
-    username: "TestMachine",
-    host: "localhost",
-    port: 60427,
+    host: process.env.SERVER_HOST || "mc.sentrysmp.eu",
+    port: parseInt(process.env.SERVER_PORT) || 25565,
+    username: process.env.USERNAME || "NotGreenMan",
+    version: "1.20.1"
 };
 
-const bot = mineflayer.createBot(settings);
+let bot;
+let chatLogs = ["-- Terminal Starting --"];
+let isBypassing = false;
 
-async function digDown() {
-    let blockPosition = bot.entity.position.offset(0, -1, 0);
-    let block = bot.blockAt(blockPosition);
+function createBot() {
+    if (bot) return;
 
-    await bot.dig(block, false);
-    bot.chat("Dug.");
+    bot = mineflayer.createBot(settings);
+
+    // FIX: Accept SentrySMP Resource Pack
+    bot.on('resource_pack', () => {
+        bot.acceptResourcePack();
+        chatLogs.push("[SYSTEM] Resource Pack Accepted.");
+    });
+
+    // Capture Chat for Web UI
+    bot.on("messagestr", (msg) => {
+        if (!msg.trim()) return;
+        chatLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        if (chatLogs.length > 50) chatLogs.shift();
+    });
+
+    // Handle Dig/Build Commands via Chat (From your original code)
+    bot.on("chat", (username, text) => {
+        if (username === bot.username) return;
+        if (text === "down") digDown();
+        else if (text === "gold") digGold();
+        else if (text === "up") buildUp();
+    });
+
+    // Anti-Bot Bypass Logic
+    bot.on("end", (reason) => {
+        bot = null;
+        let delay = isBypassing ? 30000 : 8000;
+        chatLogs.push(`-- Disconnected (${reason}). Rejoining in ${delay/1000}s... --`);
+        setTimeout(createBot, delay);
+        isBypassing = !isBypassing;
+    });
+
+    bot.on("error", (err) => {
+        chatLogs.push(`-- Error: ${err.message} --`);
+        setTimeout(createBot, 60000);
+    });
 }
 
-function isGoldBlock(block) {
-    return block.name === "gold_block";
+// --- YOUR ORIGINAL FUNCTIONS (MODIFIED FOR ASYNC) ---
+async function digDown() {
+    try {
+        let blockPosition = bot.entity.position.offset(0, -1, 0);
+        let block = bot.blockAt(blockPosition);
+        if (block && block.name !== 'air') {
+            await bot.dig(block);
+            bot.chat("Dug the block below me.");
+        }
+    } catch (e) { console.log(e); }
 }
 
 function digGold() {
     let block = bot.findBlock({
-        matching: isGoldBlock,
+        matching: (b) => b.name === "gold_block",
         maxDistance: 5,
     });
-
     if (block) bot.dig(block, false);
-    else bot.chat("i can't reach ;-;");
+    else bot.chat("I can't reach any gold ;-;");
 }
 
 async function buildUp() {
-    // Start Jump
-    bot.setControlState("jump", true);
-
-    // Wait until the bot is high enough
-    while (true) {
-        let positionBelow = bot.entity.position.offset(0, -0.5, 0);
-        let blockBelow = bot.blockAt(positionBelow);
-
-        if (blockBelow.name === "air") break;
-        await bot.waitForTicks(1);
-    }
-
-    // Place a block
-    let sourcePosition = bot.entity.position.offset(0, -1.5, 0);
-    let sourceBlock = bot.blockAt(sourcePosition);
-    
-    let faceVector = {x:0, y:1, z:0};
-
-    await bot.placeBlock(sourceBlock, faceVector);
-
-    // Stop jump
-    bot.setControlState("jump", false);
+    try {
+        bot.setControlState("jump", true);
+        await bot.waitForTicks(5);
+        let sourcePosition = bot.entity.position.offset(0, -1, 0);
+        let sourceBlock = bot.blockAt(sourcePosition);
+        await bot.placeBlock(sourceBlock, {x:0, y:1, z:0});
+        bot.setControlState("jump", false);
+    } catch (e) { bot.setControlState("jump", false); }
 }
 
-bot.on("chat", (username, text)=>{
-    if (username === bot.username) return;
+// --- WEB INTERFACE (REQUIRED FOR RENDER) ---
+app.get('/', (req, res) => {
+    let logHTML = chatLogs.map(line => `<div>${line}</div>`).join('');
+    res.send(`
+        <body style="background:#000; color:#0f0; font-family:monospace; padding:20px;">
+            <h1>Sentry AFK Bot Terminal</h1>
+            <div style="border:1px solid #333; height:400px; overflow-y:scroll; padding:10px; display:flex; flex-direction:column-reverse;">
+                <div>${logHTML}</div>
+            </div>
+            <form action="/send" method="post" style="margin-top:20px;">
+                <input name="cmd" style="width:70%; padding:10px;" placeholder="Type /login [pass] or command...">
+                <button type="submit" style="padding:10px; width:20%;">Send</button>
+            </form>
+            <p>Admin: ${process.env.MAIN_USER}</p>
+        </body>
+    `);
+});
 
-    if (text === "down") digDown();
-    else if (text === "gold") digGold();
-    else if (text === "up") buildUp();
-    else bot.chat("I don't understand.");
+app.post('/send', (req, res) => {
+    if (bot && req.body.cmd) bot.chat(req.body.cmd);
+    res.redirect('/');
+});
+
+app.listen(process.env.PORT || 10000, () => {
+    console.log("Web Terminal Live");
+    createBot();
 });
