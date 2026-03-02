@@ -1,7 +1,6 @@
 {
-  "name": "sentry-afk-bot",
+  "name": "afk-bot",
   "version": "1.0.0",
-  "description": "Advanced AFK Bot for SentrySMP",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
