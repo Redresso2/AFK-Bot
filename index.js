@@ -1,11 +1,9 @@
 const mineflayer = require('mineflayer');
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const bodyParser = require('body-parser');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+app.use(bodyParser.urlencoded({ extended: true }));
 
 const settings = {
     host: 'mc.sentrysmp.eu',
@@ -16,62 +14,59 @@ const settings = {
 };
 
 let bot;
+let chatLogs = ["-- Bot Starting... --"];
 let isBypassing = false;
 
 function createBot() {
     if (bot) return;
-
+    
     bot = mineflayer.createBot({ ...settings, hideErrors: true });
 
     bot.on('resource_pack', () => bot.acceptResourcePack());
 
     bot.on('messagestr', (msg) => {
+        if (!msg.trim()) return;
+        chatLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        if (chatLogs.length > 50) chatLogs.shift(); // Keep only last 50 lines
         console.log(msg);
-        io.emit('chat', msg); // Sends game chat to your browser
     });
 
-    bot.on('end', () => {
+    bot.on('end', (reason) => {
         bot = null;
-        const delay = isBypassing ? 30000 : 8000;
-        if (!isBypassing) isBypassing = true;
-        else isBypassing = false;
-        setTimeout(createBot, delay);
+        chatLogs.push(`-- Disconnected: ${reason}. Reconnecting... --`);
+        setTimeout(createBot, isBypassing ? 15000 : 5000);
+        isBypassing = !isBypassing;
     });
 }
 
-// Web Interface Logic
+// Simple HTML Interface
 app.get('/', (req, res) => {
+    let logHTML = chatLogs.map(line => `<div>${line}</div>`).join('');
     res.send(`
-        <body style="background:#222; color:#eee; font-family:sans-serif; padding:20px;">
-            <h2>Bot Control Center</h2>
-            <div id="logs" style="height:300px; overflow-y:scroll; background:#000; padding:10px; border:1px solid #444;"></div>
-            <input id="cmd" style="width:80%; padding:10px; margin-top:10px;" placeholder="Type command here...">
-            <button onclick="send()" style="padding:10px;">Send</button>
-            <script src="/socket.io/socket.io.js"></script>
-            <script>
-                const socket = io();
-                const logs = document.getElementById('logs');
-                socket.on('chat', (msg) => {
-                    logs.innerHTML += '<div>' + msg + '</div>';
-                    logs.scrollTop = logs.scrollHeight;
-                });
-                function send() {
-                    const val = document.getElementById('cmd').value;
-                    socket.emit('command', val);
-                    document.getElementById('cmd').value = '';
-                }
-            </script>
+        <body style="background:#111; color:#0f0; font-family:monospace; padding:20px;">
+            <h1>Bot Terminal</h1>
+            <div style="border:1px solid #333; height:400px; overflow-y:scroll; padding:10px; background:#000;">
+                ${logHTML}
+            </div>
+            <form action="/send" method="post" style="margin-top:20px;">
+                <input name="cmd" style="width:70%; padding:10px;" placeholder="Type /login or /warp here...">
+                <button type="submit" style="padding:10px; width:20%;">Send Command</button>
+            </form>
+            <button onclick="location.reload()" style="margin-top:10px; padding:10px;">Refresh Chat</button>
         </body>
     `);
 });
 
-io.on('connection', (socket) => {
-    socket.on('command', (cmd) => {
-        if (bot) bot.chat(cmd); // This lets YOU type from the website!
-    });
+app.post('/send', (req, res) => {
+    const cmd = req.body.cmd;
+    if (bot && cmd) {
+        bot.chat(cmd);
+        chatLogs.push(`> SENT: ${cmd}`);
+    }
+    res.redirect('/'); // Goes back to the main page immediately
 });
 
-server.listen(process.env.PORT || 10000, () => {
-    console.log("Control Center Live!");
+app.listen(process.env.PORT || 10000, () => {
+    console.log("Terminal Online");
     createBot();
 });
