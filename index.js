@@ -1,81 +1,77 @@
 const mineflayer = require('mineflayer');
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
 const settings = {
     host: 'mc.sentrysmp.eu',
     port: 25565,
     username: process.env.username || 'NotGreen',
     password: process.env.password || 'GreenMan',
-    owner: process.env.owner || 'Redresso2',
     version: '1.20.1'
 };
 
-let bot = null;
-let isReady = false;
+let bot;
 let isBypassing = false;
 
 function createBot() {
-    if (bot) {
-        try { bot.end(); } catch (e) {}
-        bot = null;
-    }
+    if (bot) return;
 
-    console.log(`--- Connecting... (Attempt ${isBypassing ? '#2' : '#1'}) ---`);
+    bot = mineflayer.createBot({ ...settings, hideErrors: true });
 
-    bot = mineflayer.createBot({
-        host: settings.host,
-        port: settings.port,
-        username: settings.username,
-        version: settings.version,
-        hideErrors: true
-    });
+    bot.on('resource_pack', () => bot.acceptResourcePack());
 
-    // --- NEW: RESOURCE PACK HANDLER ---
-    bot.on('resource_pack', () => {
-        bot.acceptResourcePack();
-    });
-
-    bot.once('spawn', () => {
-        if (!isBypassing) {
-            console.log("Joined Buffer. Waiting for anti-bot kick...");
-        } else {
-            console.log("Bypass Success!");
-            isReady = true;
-            setTimeout(() => { if(isReady) bot.chat('/warp afk'); }, 3000);
-        }
-    });
-
-    bot.on('chat', (username, message) => {
-        if (isReady && message.includes('/login')) {
-            setTimeout(() => bot.chat(`/login ${settings.password}`), 2000);
-        }
+    bot.on('messagestr', (msg) => {
+        console.log(msg);
+        io.emit('chat', msg); // Sends game chat to your browser
     });
 
     bot.on('end', () => {
         bot = null;
-        isReady = false;
-        if (!isBypassing) {
-            isBypassing = true;
-            console.log("Kicked. Reconnecting for bypass in 4 seconds...");
-            setTimeout(createBot, 4000);
-        } else {
-            console.log("Disconnected. Resetting in 20s...");
-            isBypassing = false;
-            setTimeout(createBot, 20000);
-        }
-    });
-
-    bot.on('error', (err) => {
-        console.log("Error:", err.message);
-        bot = null;
-        isBypassing = false;
-        setTimeout(createBot, 15000);
+        const delay = isBypassing ? 30000 : 8000;
+        if (!isBypassing) isBypassing = true;
+        else isBypassing = false;
+        setTimeout(createBot, delay);
     });
 }
 
-app.get('/', (req, res) => res.send(isReady ? "BOT ONLINE" : "BYPASSING/LOADING PACK"));
-app.listen(process.env.PORT || 10000, () => {
-    console.log("Web Server Live");
+// Web Interface Logic
+app.get('/', (req, res) => {
+    res.send(`
+        <body style="background:#222; color:#eee; font-family:sans-serif; padding:20px;">
+            <h2>Bot Control Center</h2>
+            <div id="logs" style="height:300px; overflow-y:scroll; background:#000; padding:10px; border:1px solid #444;"></div>
+            <input id="cmd" style="width:80%; padding:10px; margin-top:10px;" placeholder="Type command here...">
+            <button onclick="send()" style="padding:10px;">Send</button>
+            <script src="/socket.io/socket.io.js"></script>
+            <script>
+                const socket = io();
+                const logs = document.getElementById('logs');
+                socket.on('chat', (msg) => {
+                    logs.innerHTML += '<div>' + msg + '</div>';
+                    logs.scrollTop = logs.scrollHeight;
+                });
+                function send() {
+                    const val = document.getElementById('cmd').value;
+                    socket.emit('command', val);
+                    document.getElementById('cmd').value = '';
+                }
+            </script>
+        </body>
+    `);
+});
+
+io.on('connection', (socket) => {
+    socket.on('command', (cmd) => {
+        if (bot) bot.chat(cmd); // This lets YOU type from the website!
+    });
+});
+
+server.listen(process.env.PORT || 10000, () => {
+    console.log("Control Center Live!");
     createBot();
 });
