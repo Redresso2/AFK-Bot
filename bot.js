@@ -6,124 +6,129 @@ const bodyParser = require('body-parser');
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// --- CONFIGURATION ---
-const settings = {
+const config = {
     host: process.env.SERVER_HOST || "mc.sentrysmp.eu",
-    port: parseInt(process.env.SERVER_PORT) || 25565,
+    port: 25565,
     username: process.env.USERNAME || "NotGreenMan",
+    password: process.env.PASSWORD || "GreenMan",
     version: "1.20.1"
 };
 
 let bot;
-let chatLogs = ["-- Terminal Starting --"];
+let chatLogs = ["-- Terminal Booting --"];
 let isBypassing = false;
-let verified = false; // Prevents movement during verification
+let verified = false;
 
 function createBot() {
     if (bot) return;
+    bot = mineflayer.createBot(config);
 
-    chatLogs.push(`[SYSTEM] Attempting to connect as ${settings.username}...`);
-    bot = mineflayer.createBot(settings);
-
-    // 1. INSTANT RESOURCE PACK ACCEPT
+    // 1. Instant Resource Pack Accept
     bot.on('resource_pack', () => {
         bot.acceptResourcePack();
-        chatLogs.push("[SYSTEM] Resource Pack Accepted (Verification Step 1).");
+        log("[SYSTEM] Resource Pack Accepted.");
     });
 
-    // 2. THE VERIFICATION FREEZE
-    // SentrySMP kicks you if you move during the first few seconds.
+    // 2. The Spawn/Verification Handling
     bot.once('spawn', () => {
         verified = false;
-        chatLogs.push("[SYSTEM] Spawned. Freezing for 12s verification...");
+        log("[SYSTEM] Spawned. Waiting 12s for verification check...");
         
         setTimeout(() => {
             verified = true;
-            chatLogs.push("[SYSTEM] Verification complete. Controls active.");
+            log("[SYSTEM] Verification window passed. Starting Auth sequence.");
+            handleAuth();
         }, 12000);
     });
 
-    // 3. TUTORIAL LOGIC: Only look at players IF verified
-    bot.on("move", () => {
-        if (!verified) return; 
-        
-        let friend = bot.nearestEntity();
-        if (friend && friend.type === 'player') { 
-            bot.lookAt(friend.position.offset(0, friend.height, 0));
-        }
-    });
+    // 3. Logic for Auth & GUI Navigation
+    function handleAuth() {
+        // Detect if we need to Register or Login based on chat history
+        // (Handled in the messagestr listener below)
+    }
 
-    // 4. CHAT LOGS & AUTO-LOGIN
     bot.on("messagestr", (msg) => {
         if (!msg.trim()) return;
-        chatLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-        if (chatLogs.length > 50) chatLogs.shift();
+        log(`[CHAT] ${msg}`);
 
-        // Auto-detect login prompt
-        if (msg.includes("/login") || msg.includes("log in")) {
-            const pass = process.env.PASSWORD || "GreenMan";
-            setTimeout(() => {
-                bot.chat(`/login ${pass}`);
-                chatLogs.push(`[SYSTEM] Sent auto-login password.`);
-            }, 2000);
+        // Step: Register/Login
+        if (msg.includes("/register")) {
+            bot.chat(`/register ${config.password} ${config.password}`);
+            startGuiSequence();
+        } else if (msg.includes("/login")) {
+            bot.chat(`/login ${config.password}`);
+            startGuiSequence();
         }
     });
 
-    // 5. ANTI-SPAM RECONNECT
+    function startGuiSequence() {
+        log("[STEP] Waiting 3s after login to switch to 5th slot...");
+        setTimeout(() => {
+            // Step: Select 5th slot (index 4)
+            bot.setQuickBarSlot(4); 
+            log("[STEP] 5th Slot Selected. Right-clicking...");
+            
+            // Step: Right Click
+            bot.activateItem(); 
+
+            // Step: Wait for Window to open
+            bot.once('windowOpen', (window) => {
+                log("[STEP] GUI Opened. Clicking 14th slot...");
+                // 14th slot is index 13
+                bot.clickWindow(13, 0, 0); 
+                
+                log("[STEP] Clicked. Waiting 20s for server transition...");
+                setTimeout(() => {
+                    log("[STEP] Running /warp afk...");
+                    bot.chat("/warp afk");
+                    startAntiAfk();
+                }, 20000);
+            });
+        }, 3000);
+    }
+
+    // 4. Anti-AFK (Jumping & Looking)
+    function startAntiAfk() {
+        setInterval(() => {
+            if (!bot) return;
+            bot.setControlState('jump', true);
+            setTimeout(() => bot.setControlState('jump', false), 500);
+            bot.look(Math.random() * Math.PI * 2, 0);
+        }, 45000);
+    }
+
+    // 5. Reconnect Logic
     bot.on("end", (reason) => {
         bot = null;
-        verified = false;
-        // If we get socketClosed, wait longer to avoid an IP ban
-        let delay = isBypassing ? 45000 : 10000;
-        chatLogs.push(`-- Status: ${reason}. Reconnecting in ${delay/1000}s --`);
-        
+        let delay = isBypassing ? 30000 : 8000;
+        log(`-- Disconnected (${reason}). Rejoining in ${delay/1000}s --`);
         setTimeout(createBot, delay);
         isBypassing = !isBypassing;
     });
 
-    bot.on("error", (err) => {
-        chatLogs.push(`-- Error: ${err.message} --`);
-        bot = null;
-        setTimeout(createBot, 60000);
-    });
+    bot.on("error", (err) => log(`[ERROR] ${err.message}`));
 }
 
-// --- SURVIVAL FUNCTIONS ---
-async function digDown() {
-    if (!verified) return;
-    try {
-        let block = bot.blockAt(bot.entity.position.offset(0, -1, 0));
-        if (block && block.name !== 'air') await bot.dig(block);
-    } catch (e) { console.log("Dig Error"); }
+function log(text) {
+    const time = new Date().toLocaleTimeString();
+    chatLogs.push(`[${time}] ${text}`);
+    if (chatLogs.length > 50) chatLogs.shift();
+    console.log(text);
 }
 
-async function buildUp() {
-    if (!verified) return;
-    try {
-        bot.setControlState("jump", true);
-        await bot.waitForTicks(5);
-        let block = bot.blockAt(bot.entity.position.offset(0, -1, 0));
-        await bot.placeBlock(block, {x:0, y:1, z:0});
-        bot.setControlState("jump", false);
-    } catch (e) { bot.setControlState("jump", false); }
-}
-
-// --- WEB TERMINAL ---
+// --- WEB INTERFACE ---
 app.get('/', (req, res) => {
-    let logHTML = chatLogs.map(line => `<div style="margin-bottom:4px;">${line}</div>`).join('');
+    let logHTML = chatLogs.map(line => `<div>${line}</div>`).join('');
     res.send(`
-        <body style="background:#000; color:#0f0; font-family:monospace; padding:20px; line-height:1.4;">
-            <h2 style="color:#fff; border-bottom:1px solid #333;">AFK BOT TERMINAL</h2>
-            <div style="border:1px solid #444; height:450px; overflow-y:scroll; padding:15px; background:#050505; display:flex; flex-direction:column-reverse;">
+        <body style="background:#000; color:#0f0; font-family:monospace; padding:20px;">
+            <h1>SentrySMP AFK Bot</h1>
+            <div style="border:1px solid #333; height:450px; overflow-y:scroll; padding:10px; display:flex; flex-direction:column-reverse;">
                 <div>${logHTML}</div>
             </div>
             <form action="/send" method="post" style="margin-top:20px;">
-                <input name="cmd" autofocus style="width:75%; padding:12px; background:#111; color:#fff; border:1px solid #555;" placeholder="Type /warp or message...">
-                <button type="submit" style="padding:12px; width:20%; background:#222; color:#fff; cursor:pointer;">SEND</button>
+                <input name="cmd" style="width:70%; padding:10px;" placeholder="Manual command...">
+                <button type="submit" style="padding:10px;">Send</button>
             </form>
-            <div style="margin-top:10px; font-size:12px; color:#666;">
-                Status: \${verified ? "VERIFIED" : "WAITING"} | Admin: ${process.env.MAIN_USER}
-            </div>
         </body>
     `);
 });
@@ -134,6 +139,6 @@ app.post('/send', (req, res) => {
 });
 
 app.listen(process.env.PORT || 10000, () => {
-    console.log("Terminal Ready");
+    console.log("Terminal Online");
     createBot();
 });
